@@ -40,29 +40,22 @@ export default {
         // 3. RTCPeerConnection 생성 및 트랙 추가
         this.peerConnection = new RTCPeerConnection({
           iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' } // Google 공용 STUN 서버 추가
+            { urls: 'stun:stun.l.google.com:19302' }, // Google 공용 STUN 서버 추가
+            { urls: 'stun:stun2.l.google.com:19302' }
           ]
         });
 
-        // 상태 변경 로그 추가
+        // ICE 연결 상태 핸들러 추가
         this.peerConnection.oniceconnectionstatechange = () => {
-            console.log('ICE Connection State:', this.peerConnection.iceConnectionState);
-        };
-
-        this.peerConnection.onconnectionstatechange = () => {
-            console.log('Connection State:', this.peerConnection.connectionState);
+          console.log('ICE 연결 상태:', this.peerConnection.iceConnectionState);
         };
 
         localStream.getTracks().forEach(track => {
           this.peerConnection.addTrack(track, localStream);
-          console.log("트랙 추가");
+          console.log("트랙 추가됨 : ", track);
         });
 
-        console.log('Connection State:', this.peerConnection.connectionState);
-        console.log('ICE Connection State:', this.peerConnection.iceConnectionState);
-        console.log('Signaling State:', this.peerConnection.signalingState);
-
-        // 5. ICE 후보 이벤트 핸들러 설정
+        // 4. ICE 후보 수집 시작
         this.peerConnection.onicecandidate = event => {
             console.log("onicecandidate 핸들러");
             if (event.candidate) {
@@ -73,9 +66,10 @@ export default {
             }
         };
 
-        // 6. SDP Offer 생성 및 Kurento로 전송
+        // 5. SDP Offer 생성 및 Kurento 서버로 전송
         const offer = await this.peerConnection.createOffer(); // 생성 
         console.log("offer 생성: ", offer);
+        console.log('SDP Offer:', offer.sdp); // 브로드캐스터 측에서
 
         await this.peerConnection.setLocalDescription(offer);
         this.signalingSocket.send(JSON.stringify({
@@ -85,7 +79,7 @@ export default {
         console.log("offer를 kurento에 전송 완료");
       };
 
-      // 7. Kurento로부터 SDP Answer 및 ICE 후보 수신
+      // 6. SDP Answer 및 ICE 후보 수신
       this.signalingSocket.onmessage = async (message) => {
         const data = JSON.parse(message.data);
         console.log("받은 answer과 ice candidate : ", data);
@@ -129,27 +123,25 @@ export default {
 
                 if (data.id === 'sdpOffer') {
                     console.log("offer를 받은 경우");
-
-                    // SDP Offer 설정 및 Answer 생성
-                    // this.peerConnection = new RTCPeerConnection();
                     
                     this.peerConnection = new RTCPeerConnection({
                         iceServers: [
-                            { urls: 'stun:stun.l.google.com:19302' } // 브로드캐스터와 동일한 STUN 서버
+                            { urls: 'stun:stun.l.google.com:19302' }, // 브로드캐스터와 동일한 STUN 서버
+                            { urls: 'stun:stun2.l.google.com:19302' }
                         ]
                     });
 
-                    // 여기에 추가합니다: ICE Connection 상태 변화를 감지
+                    // ICE 연결 상태 핸들러 추가
                     this.peerConnection.oniceconnectionstatechange = () => {
-                        console.log('***ICE Connection State:', this.peerConnection.iceConnectionState);
+                      console.log('ICE 연결 상태:', this.peerConnection.iceConnectionState);
                     };
 
-                    // 상태 변경 로그 추가
-                    this.peerConnection.onconnectionstatechange = () => {
-                        console.log('***Connection State:', this.peerConnection.connectionState);
-                };
+                    // Signaling 상태 변화를 감지
+                    this.peerConnection.onsignalingstatechange = () => {
+                        console.log('***Signaling State:', this.peerConnection.signalingState);
+                    };
 
-                    // onicecandidate 핸들러를 설정
+                    // 3. ICE 후보 처리
                     this.peerConnection.onicecandidate = event => {
                         console.log("onicecandidate 핸들러");
                         if (event.candidate) {
@@ -161,48 +153,29 @@ export default {
                         }
                     };
 
-                    // 트랙 수신 이벤트 핸들러를 이 시점에 추가합니다.
-                    // this.peerConnection.ontrack = (event) => {
-                    //     console.log("ontrack 핸들러");
-                    
-                    //     const remoteStream = event.streams[0];
-                    //     console.log('Received remote stream tracks:', remoteStream.getTracks());
-                    //     document.getElementById('yourVideo').srcObject = remoteStream;
-                    // };
-                    this.peerConnection.ontrack = (event) => {
-                        console.log("ontrack 핸들러");
-
-                        const remoteStream = event.streams[0];
-                        console.log('* Received remote stream tracks:', remoteStream.getTracks());
-                        const videoElement = document.getElementById('yourVideo');
-                        console.log("원격 스트림을 비디오 요소에 할당: ", videoElement);
-
-                        if (videoElement) {
-                            videoElement.srcObject = remoteStream;
-                        } else {
-                            console.error('비디오 요소를 찾을 수 없음');
-                        }
-                    };
-
+                    // 4. 원격 SDP Offer 설정
                     await this.peerConnection.setRemoteDescription(new RTCSessionDescription({
-                        type: 'offer',
-                        sdp: data.sdpOffer
+                      type: 'offer',
+                      sdp: data.sdpOffer
                     }));
 
-                    console.log('Connection State:', this.peerConnection.connectionState);
-                    console.log('ICE Connection State:', this.peerConnection.iceConnectionState);
-                    console.log('Signaling State:', this.peerConnection.signalingState);
-
+                    // 5. SDP Answer 생성 및 방송자에게 전송
                     const answer = await this.peerConnection.createAnswer();
-                    console.log("answer 생성: ", answer);
+                    console.log("생성한 answer: ", answer);
+                    console.log('SDP Answer:', answer.sdp); // 시청자 측에서
                     await this.peerConnection.setLocalDescription(answer);
-
-                    // SDP Answer를 Kurento로 전송
                     this.signalingSocket.send(JSON.stringify({
-                        id: 'sdpAnswer',
-                        sdpAnswer: this.peerConnection.localDescription.sdp
+                      id: 'sdpAnswer',
+                      sdpAnswer: this.peerConnection.localDescription.sdp
                     }));
-                    console.log("kurento에 answer 전송 완료");
+
+                    // 6. 원격 비디오 스트림 처리
+                    this.peerConnection.ontrack = (event) => {
+                      console.log("ontrack 이벤트 발생, 원격 스트림을 수신했습니다.");
+                      const remoteStream = event.streams[0];
+                      console.log('* Received remote stream tracks:', remoteStream.getTracks());
+                      document.getElementById('yourVideo').srcObject = remoteStream;
+                    };
 
                 } else if (data.id === 'iceCandidate') {
                     console.log("icecandidate인 경우");
